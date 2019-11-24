@@ -8,7 +8,6 @@ class PokerServer(asyncio.Protocol):
     # 変数
     player_name = None                  # プレイヤーのアドレス情報
     player_money = 10000                # プレイヤーの所持金
-    is_first_turn = True                # プレイヤーの最初の手番かどうか
 
     # スタティック変数
     players_hand = {}                   # 全プレイヤーの手札
@@ -20,10 +19,7 @@ class PokerServer(asyncio.Protocol):
     player_next_turn = None             # 次に手番が来るプレイヤーのアドレス
     max_num_players = 3                 # 参加できるプレイヤー数の上限
     cur_num_players = 0                 # 現在参加しているプレイヤー数
-
-    numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]           # 使用するカードナンバー
-    suits = ['spade', 'heart', 'diamond', 'club']                   # 使用するマーク
-    deck = list(itertools.product(range(1, 14), suits))             # 山札
+    deck = None                         # 山札
 
 
     def _initialize_deck(self):
@@ -93,11 +89,6 @@ class PokerServer(asyncio.Protocol):
 
 
     def data_received(self, data):
-        '''
-        if self.player_name == 'A':
-            print('Aさん: ', self.changed_card_flags)
-        '''
-        # print('ステータス:', PokerServer.players_status)
         """クライアントからデータを受信したときに呼ばれるイベントハンドラ"""
         # 接続元の情報を取得する
         client_address = self.client_address
@@ -236,10 +227,6 @@ class PokerServer(asyncio.Protocol):
                 for card in player_hand:
                     send_msg += self._card_number_and_suit_to_str(card) + ' '
 
-                # 最初の手番かどうかのフラグをFalseにする
-                if self.is_first_turn:
-                    self.is_first_turn = False
-
                 self.transport.write(send_msg.encode())
 
                 PokerServer.players_status[(client_address, client_port)] = PlayerStatus.GAME_END_OF_TURN
@@ -288,38 +275,6 @@ class PokerServer(asyncio.Protocol):
             self.transport.write('1Aの勝ち！！'.encode())
             PokerServer.players_status[(client_address, client_port)] = PlayerStatus.GAME_PREPARE
 
-
-    def connection_lost(self, exc):
-        """クライアントとの接続が切れたときに呼ばれるイベントハンドラ"""
-        # 接続が切れたら後始末をする
-        client_address, client_port = self.transport.get_extra_info('peername')
-        print('Bye-Bye: {0}:{1}'.format(client_address, client_port))
-        self.transport.close()
-
-
-class EchoServer(asyncio.Protocol):
-    def connection_made(self, transport):
-        """クライアントからの接続があったときに呼ばれるイベントハンドラ"""
-        # 接続をインスタンス変数として保存する
-        self.transport = transport
-
-        # 接続元の情報を出力する
-        client_address, client_port = self.transport.get_extra_info('peername')
-        print('New client: {0}:{1}'.format(client_address, client_port))
-
-    def data_received(self, data):
-        """クライアントからデータを受信したときに呼ばれるイベントハンドラ"""
-        # 受信した内容を出力する
-        client_address, client_port = self.transport.get_extra_info('peername')
-        print('Recv: {0} to {1}:{2}'.format(data,
-                                            client_address,
-                                            client_port))
-
-        # 受信したのと同じ内容を返信する
-        self.transport.write(data)
-        print('Send: {0} to {1}:{2}'.format(data,
-                                            client_address,
-                                            client_port))
 
     def connection_lost(self, exc):
         """クライアントとの接続が切れたときに呼ばれるイベントハンドラ"""
