@@ -6,32 +6,35 @@ from player_status import PlayerStatus
 
 class PokerServer(asyncio.Protocol):
     # 変数
-    player_name = None          # プレイヤーのアドレス情報
-    player_status = None        # プレイヤーの状態
-    player_money = 10000        # プレイヤーの所持金
-    changed_card_flags = None   # プレイヤーの手札のそれぞれが山札のカードと交換したものかどうか
-    can_change_cards = {}       # プレイヤーの手札のうち交換可能なカード
-    is_first_turn = True        # プレイヤーの最初の手番かどうか
+    player_name = None                  # プレイヤーのアドレス情報
+    player_money = 10000                # プレイヤーの所持金
+    is_first_turn = True                # プレイヤーの最初の手番かどうか
 
     # スタティック変数
-    players_hand = {}           # プレイヤーの手札
-    players_address = []        # 全プレイヤーのアドレス
-    players_status = {}         # 全プレイヤーの状態
-    player_dealer = None        # ディーラー（最後に手番が来るプレイヤー）のアドレス
-    player_in_turn = None       # 手番のプレイヤーのアドレス
-    player_next_turn = None     # 次に手番が来るプレイヤーのアドレス
-    max_num_players = 3         # 参加できるプレイヤー数の上限
-    cur_num_players = 0         # 現在参加しているプレイヤー数
-    # is_game_started = False     # ゲームが開始しているかどうか
+    players_hand = {}                   # 全プレイヤーの手札
+    players_changed_card_flags = {}     # 全プレイヤーの手札が山札と交換したカードかどうか
+    players_address = []                # 全プレイヤーのアドレス
+    players_status = {}                 # 全プレイヤーの状態
+    player_dealer = None                # ディーラー（最後に手番が来るプレイヤー）のアドレス
+    player_in_turn = None               # 手番のプレイヤーのアドレス
+    player_next_turn = None             # 次に手番が来るプレイヤーのアドレス
+    max_num_players = 3                 # 参加できるプレイヤー数の上限
+    cur_num_players = 0                 # 現在参加しているプレイヤー数
+
     numbers = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]           # 使用するカードナンバー
     suits = ['spade', 'heart', 'diamond', 'club']                   # 使用するマーク
     deck = list(itertools.product(range(1, 14), suits))             # 山札
 
 
+    def _initialize_deck(self):
+        """山札を初期化する関数"""
+        suits = ['spade', 'heart', 'diamond', 'club']
+        PokerServer.deck = list(itertools.product(range(1, 14), suits))
+
+
     def _draw_card(self, num_cards, address):
         """カードを山札から引く関数"""
         PokerServer.players_hand[address] = PokerServer.deck[:num_cards]
-        # self.player_hand = PokerServer.deck[:num_cards]
         del PokerServer.deck[:num_cards]
 
 
@@ -40,10 +43,12 @@ class PokerServer(asyncio.Protocol):
         # player_hand = PokerServer.players_hand[(self.client_address, self.client_port)]
         card_idx = PokerServer.players_hand[(self.client_address, self.client_port)].index(card)
         del PokerServer.players_hand[(self.client_address, self.client_port)][card_idx]
-        del self.changed_card_flags[card_idx]
+        del PokerServer.players_changed_card_flags[(self.client_address, self.client_port)][card_idx]
+        # del self.changed_card_flags[card_idx]
         PokerServer.players_hand[(self.client_address, self.client_port)].append(PokerServer.deck[0])
         del PokerServer.deck[0]
-        self.changed_card_flags.append(True)
+        PokerServer.players_changed_card_flags[(self.client_address, self.client_port)].append(True)
+        # self.changed_card_flags.append(True)
 
 
     def _card_number_and_suit_to_str(self, card):
@@ -115,18 +120,26 @@ class PokerServer(asyncio.Protocol):
 
             # 以下の処理を１回だけ行うための条件
             if (client_address, client_port) == PokerServer.players_address[0]:
+                print('ゲームを始めるよ！！')
+                # プレイヤーの順番を決める
+                PokerServer.player_in_turn = PokerServer.players_address[0]
+                PokerServer.player_next_turn = None
+                PokerServer.player_dealer = PokerServer.players_address[-1]
+
+                # 山札を初期化する
+                self._initialize_deck()
+
                 # 山札をシャッフルする
                 random.shuffle(PokerServer.deck)
 
-                # プレイヤーの順番を決める
-                PokerServer.player_in_turn = PokerServer.players_address[0]
-                PokerServer.player_dealer = PokerServer.players_address[-1]
+                # 手札を初期化する
+                PokerServer.players_hand = {}
+                PokerServer.players_changed_card_flags = {}
 
                 # 全プレイヤーが順番に山札からカードを引く
                 for address in PokerServer.players_address:
                     self._draw_card(5, address)
-
-            self.changed_card_flags = [False] * 5
+                    PokerServer.players_changed_card_flags[address] = [False] * 5
 
             # プレイヤーの状態を変更する
             PokerServer.players_status[(client_address, client_port)] = PlayerStatus.GAME_LOOK_FIRST_HAND
@@ -146,7 +159,7 @@ class PokerServer(asyncio.Protocol):
                 for card in PokerServer.players_hand[(client_address, client_port)]:
                     send_msg += self._card_number_and_suit_to_str(card) + ' '
             except KeyError:
-                print(PokerServer.players_hand)
+                print('players_hand:', PokerServer.players_hand)
                 raise KeyError
             self.transport.write(send_msg.encode())
 
@@ -193,12 +206,16 @@ class PokerServer(asyncio.Protocol):
             send_msg = '\n交換するカードの番号を選んでください。\n'
             send_msg += '0. 交換しない\n'
             idx = 1
-            for card_idx, card in enumerate(PokerServer.players_hand[(client_address, client_port)]):
-                if not self.changed_card_flags[card_idx]:
+
+            player_hand = PokerServer.players_hand[(client_address, client_port)]
+            player_changed_card_flags = PokerServer.players_changed_card_flags[(client_address, client_port)]
+            for card_idx, card in enumerate(player_hand):
+                if not player_changed_card_flags[card_idx]:
                     send_msg += str(idx) + '. '
                     send_msg += self._card_number_and_suit_to_str(card) + '\n'
-                    self.can_change_cards[idx] = card
+                    # self.can_change_cards[idx] = card
                     idx += 1
+
             self.transport.write(send_msg.encode())
             PokerServer.players_status[(client_address, client_port)] = PlayerStatus.GAME_SELECT_CHANGE_CARD
         elif player_status == PlayerStatus.GAME_SELECT_CHANGE_CARD:
@@ -207,13 +224,16 @@ class PokerServer(asyncio.Protocol):
             # プレイヤーから交換するカードの番号を受け取る
             select_idx = int(data.decode())
 
+            # プレイヤーの手札を取得する
+            player_hand = PokerServer.players_hand[(client_address, client_port)]
+
             # 交換可能なカードの個数を取得する
-            num_can_change_cards = len(self.can_change_cards)
+            num_can_change_cards = PokerServer.players_changed_card_flags[(client_address, client_port)].count(False)
 
             if select_idx == 0 or num_can_change_cards == 0:
                 # カードの交換が終了したときの処理
                 send_msg = '1手札の交換を終了します。\n手札: '
-                for card in PokerServer.players_hand[(client_address, client_port)]:
+                for card in player_hand:
                     send_msg += self._card_number_and_suit_to_str(card) + ' '
 
                 # 最初の手番かどうかのフラグをFalseにする
@@ -226,7 +246,7 @@ class PokerServer(asyncio.Protocol):
             elif select_idx <= num_can_change_cards:
                 # カードの交換を行うときの処理
                 # 交換するカードを取得する
-                change_card = self.can_change_cards[select_idx]
+                change_card = player_hand[select_idx - 1]
 
                 # 選択したカードを捨て、山札からカードを引く
                 self._change_card(change_card)

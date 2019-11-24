@@ -159,7 +159,8 @@ def client(host, port):
             wait_player_process()
 
             # ゲームの処理
-            game_process()
+            while True:
+                game_process()
         except:
             sys.exit(sys.exc_info()[1])
 
