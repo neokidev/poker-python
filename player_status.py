@@ -9,4 +9,4 @@ class PlayerStatus():
     GAME_END_OF_TURN = 8
     GAME_START_CHANGE_CARD = 9
     GAME_SELECT_CHANGE_CARD = 10
-    GAME_JUDGE_HAND = 11
+    GAME_RESULT = 11

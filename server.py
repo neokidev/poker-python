@@ -1,6 +1,7 @@
 import asyncio
 import random
 import itertools
+import collections
 from player_status import PlayerStatus
 
 
@@ -18,6 +19,73 @@ class PokerServer(asyncio.Protocol):
     max_num_players = 3                 # 参加できるプレイヤー数の上限
     cur_num_players = 0                 # 現在参加しているプレイヤー数
     deck = None                         # 山札
+    winners = None                      # 勝利したプレイヤーのアドレスのリスト
+
+
+    def judge_hand(self, hand):
+        """手札の役を判定する関数"""
+        # handの数字だけを取り出したリスト
+        hand_nums = [x[0] for x in hand]
+        hand_nums.sort()
+        # handのマークだけを取り出したリスト
+        hand_marks = [x[1] for x in hand]
+
+        # 要素の重複をカウントした辞書
+        count_num = collections.Counter(hand_nums)
+        count_mark = collections.Counter(hand_marks)
+
+        # ストレートフラッシュ判定
+        if (len(count_mark) == 1 and (hand_nums == list(range(hand_nums[0], hand_nums[0]+5)) or hand_nums == [1, 10, 11, 12, 13])):
+            return [1, "ストレートフラッシュ"]
+
+        # フォーカード判定
+        if (max(count_num.values()) == 4):
+            return [2, "フォーカード"]
+
+        # フルハウス判定
+        if (max(count_num.values()) == 3 and min(count_num.values()) == 2):
+            return [3, "フルハウス"]
+
+        # フラッシュ判定
+        if (len(count_mark) == 1):
+            return [4, "フラッシュ"]
+
+        # ストレート判定
+        if (hand_nums == list(range(hand_nums[0], hand_nums[0]+5)) or hand_nums == [1, 10, 11, 12, 13]):
+            return [5, "ストレート"]
+
+        # スリーカード判定
+        if (max(count_num.values()) == 3):
+            return [6, "スリーカード"]
+
+        # ツーペア判定
+        if (len(count_num) == 3):
+            return [7, "ツーペア"]
+
+        # ワンペア判定
+        if (len(count_num) == 4):
+            return [8, "ワンペア"]
+
+        # ハイカード判定
+        return [9, "ハイカード"]
+
+
+    def judge_winner(self):
+        """プレイヤーのハンドから勝敗を判定する"""
+        hands = PokerServer.players_hand
+
+        # 各プレイヤーハンドの役のリスト
+        player_judge_hand = [self.judge_hand(hand) for hand in hands.values()]
+
+        # 各プレイヤーハンドの役のランク（強さ）のみを抜き出したリスト
+        player_hand_ranks = [x[0] for x in player_judge_hand]
+
+        # 勝者のindex
+        winner_player = [i for i, x in enumerate(player_hand_ranks) if x == min(player_hand_ranks)]
+
+        # 勝者のアドレスのリスト
+        winners = [list(hands.keys())[x] for x in winner_player]
+        return winners
 
 
     def _initialize_deck(self):
@@ -55,6 +123,32 @@ class PokerServer(asyncio.Protocol):
 
         number, suit = card
         return convert_suit[suit] + convert_number[number]
+
+
+    def _hand_to_str(self, hand):
+        """手札の情報を文字列として返す関数"""
+        string = ''
+        for card in hand:
+            string += self._card_number_and_suit_to_str(card) + ' '
+        return string
+
+
+    def _result_to_str(self):
+        """ゲームの結果を文字列として返す関数"""
+        string = ''
+        for address in PokerServer.players_address:
+            player_name = PokerServer.players_name[address]
+            hand = PokerServer.players_hand[address]
+
+            if address in PokerServer.winners:
+                win_or_lose = 'Win!'
+            else:
+                win_or_lose = 'Lose...'
+
+            string += player_name + ': '
+            string += self._hand_to_str(hand)
+            string += win_or_lose + '\n'
+        return string
 
 
     def connection_made(self, transport):
@@ -112,7 +206,7 @@ class PokerServer(asyncio.Protocol):
         elif player_status == PlayerStatus.GAME_PREPARE:
             # すべてのプレイヤーのうち、少なくとも1人がゲームを開始していないときは処理を終了する
             for player_status in PokerServer.players_status.values():
-                if player_status in (PlayerStatus.REGIST_NAME, PlayerStatus.WAIT_PLAYER, PlayerStatus.GAME_JUDGE_HAND):
+                if player_status in (PlayerStatus.REGIST_NAME, PlayerStatus.WAIT_PLAYER, PlayerStatus.GAME_RESULT):
                     self.transport.write('0'.encode())
                     return
 
@@ -138,6 +232,9 @@ class PokerServer(asyncio.Protocol):
                 for address in PokerServer.players_address:
                     self._draw_card(5, address)
                     PokerServer.players_changed_card_flags[address] = [False] * 5
+
+                # 勝利したプレイヤーのリストをNoneにする
+                PokerServer.winners = None
 
             # プレイヤーの状態を変更する
             PokerServer.players_status[(client_address, client_port)] = PlayerStatus.GAME_LOOK_FIRST_HAND
@@ -265,7 +362,9 @@ class PokerServer(asyncio.Protocol):
                     return
 
             if PokerServer.player_in_turn == PokerServer.player_dealer:
-                PokerServer.players_status[(client_address, client_port)] = PlayerStatus.GAME_JUDGE_HAND
+                if (client_address, client_port) == PokerServer.player_in_turn:
+                    PokerServer.winners = self.judge_winner()
+                PokerServer.players_status[(client_address, client_port)] = PlayerStatus.GAME_RESULT
                 self.transport.write('2'.encode())
             else:
                 if (client_address, client_port) == PokerServer.player_in_turn:
@@ -276,14 +375,14 @@ class PokerServer(asyncio.Protocol):
 
                 self.transport.write('1'.encode())
                 PokerServer.players_status[(client_address, client_port)] = PlayerStatus.GAME_BEGINNING_OF_TURN
-        elif player_status == PlayerStatus.GAME_JUDGE_HAND:
+        elif player_status == PlayerStatus.GAME_RESULT:
             for player_status in PokerServer.players_status.values():
                 if player_status == PlayerStatus.GAME_END_OF_TURN:
                     self.transport.write('0'.encode())
                     return
 
-            winner = list(PokerServer.players_name.values())[0] # 勝者判定関数が未実装なので、最初の人を勝者とする
-            send_msg = '1' + winner + 'さんの勝ち！！'
+            send_msg = '1結果を表示します\n'
+            send_msg += self._result_to_str()
             self.transport.write(send_msg.encode())
             PokerServer.players_status[(client_address, client_port)] = PlayerStatus.GAME_PREPARE
 
