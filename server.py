@@ -5,14 +5,12 @@ from player_status import PlayerStatus
 
 
 class PokerServer(asyncio.Protocol):
-    # 変数
-    player_name = None                  # プレイヤーのアドレス情報
-    player_money = 10000                # プレイヤーの所持金
-
     # スタティック変数
+    players_address = []                # 全プレイヤーのアドレス
+    players_name = {}                   # 全プレイヤーの名前
+    players_money = {}                  # 全プレイヤーの所持金
     players_hand = {}                   # 全プレイヤーの手札
     players_changed_card_flags = {}     # 全プレイヤーの手札が山札と交換したカードかどうか
-    players_address = []                # 全プレイヤーのアドレス
     players_status = {}                 # 全プレイヤーの状態
     player_dealer = None                # ディーラー（最後に手番が来るプレイヤー）のアドレス
     player_in_turn = None               # 手番のプレイヤーのアドレス
@@ -59,11 +57,6 @@ class PokerServer(asyncio.Protocol):
         return convert_suit[suit] + convert_number[number]
 
 
-    def _define_player_name(self):
-        """プレイヤーの名前を自動的に決める関数"""
-        self.player_name = chr(ord('A') + PokerServer.cur_num_players)
-
-
     def connection_made(self, transport):
         """クライアントからの接続があったときに呼ばれるイベントハンドラ"""
         # 接続をインスタンス変数として保存する
@@ -78,13 +71,14 @@ class PokerServer(asyncio.Protocol):
         print('New client: {0}:{1}'.format(client_address, client_port))
 
         if PokerServer.cur_num_players < PokerServer.max_num_players:
-            self._define_player_name()
-            PokerServer.players_status[(client_address, client_port)] = PlayerStatus.WAIT_PLAYER
+            PokerServer.players_status[(client_address, client_port)] = PlayerStatus.REGIST_NAME
             PokerServer.cur_num_players += 1
             PokerServer.players_address.append((client_address, client_port))
-            self.transport.write(('ポーカーの世界へようこそ！あなたは' + self.player_name + 'さんです。').encode())
+
+            send_msg = '0あなたの名前を入力してください。'
+            self.transport.write(send_msg.encode())
         else:
-            self.transport.write('参加人数の上限を超えているので，参加できませんでした'.encode())
+            self.transport.write('1参加人数の上限を超えているので，参加できませんでした'.encode())
             self.transport.close()
 
 
@@ -96,8 +90,21 @@ class PokerServer(asyncio.Protocol):
 
         # 接続元プレイヤーの現在の状態によって処理を変える
         player_status = PokerServer.players_status[(client_address, client_port)]
-        if player_status == PlayerStatus.WAIT_PLAYER:
-            if PokerServer.cur_num_players < PokerServer.max_num_players:
+        if player_status == PlayerStatus.REGIST_NAME:
+            player_name = data.decode()
+            PokerServer.players_name[(client_address, client_port)] = player_name
+            PokerServer.players_status[(client_address, client_port)] = PlayerStatus.WAIT_PLAYER
+
+            send_msg = 'ポーカーの世界へようこそ！' + player_name + 'さん'
+            self.transport.write(send_msg.encode())
+        elif player_status == PlayerStatus.WAIT_PLAYER:
+            # 誰かが名前を登録している途中か調べる
+            ragisting_name_flag = False
+            for player_status in PokerServer.players_status.values():
+                if player_status == PlayerStatus.REGIST_NAME:
+                    ragisting_name_flag = True
+
+            if PokerServer.cur_num_players < PokerServer.max_num_players or ragisting_name_flag:
                 self.transport.write('0プレイヤーが集まるのを待っています。'.encode())
             else:
                 self.transport.write('1プレイヤーが揃いました！'.encode())
@@ -105,7 +112,7 @@ class PokerServer(asyncio.Protocol):
         elif player_status == PlayerStatus.GAME_PREPARE:
             # すべてのプレイヤーのうち、少なくとも1人がゲームを開始していないときは処理を終了する
             for player_status in PokerServer.players_status.values():
-                if player_status in (PlayerStatus.WAIT_PLAYER, PlayerStatus.GAME_JUDGE_HAND):
+                if player_status in (PlayerStatus.REGIST_NAME, PlayerStatus.WAIT_PLAYER, PlayerStatus.GAME_JUDGE_HAND):
                     self.transport.write('0'.encode())
                     return
 
@@ -185,7 +192,10 @@ class PokerServer(asyncio.Protocol):
                 PlayerStatus.GAME_BEGINNING_OF_TURN, PlayerStatus.GAME_MY_TURN,
                 PlayerStatus.GAME_START_CHANGE_CARD, PlayerStatus.GAME_SELECT_CHANGE_CARD):
                 # 他のプレイヤーの手番のとき
-                self.transport.write('0他のプレイヤーの番です。'.encode())
+                send_msg = '0'
+                send_msg += PokerServer.players_name[PokerServer.player_in_turn]
+                send_msg += 'さんの番です。'
+                self.transport.write(send_msg.encode())
             elif PokerServer.players_status[PokerServer.player_in_turn] == PlayerStatus.GAME_END_OF_TURN:
                 # 他のプレイヤーの手番が終了したとき
                 self.transport.write('1'.encode())
@@ -272,7 +282,9 @@ class PokerServer(asyncio.Protocol):
                     self.transport.write('0'.encode())
                     return
 
-            self.transport.write('1Aの勝ち！！'.encode())
+            winner = list(PokerServer.players_name.values())[0] # 勝者判定関数が未実装なので、最初の人を勝者とする
+            send_msg = '1' + winner + 'さんの勝ち！！'
+            self.transport.write(send_msg.encode())
             PokerServer.players_status[(client_address, client_port)] = PlayerStatus.GAME_PREPARE
 
 

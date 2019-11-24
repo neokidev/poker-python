@@ -8,8 +8,21 @@ def client(host, port):
     def enter_process():
         """入室処理"""
         sock.connect((host, port))
-        msg = sock.recv(1024).decode()
-        print(msg) # ポーカーの世界へようこそ
+        data = sock.recv(1024).decode()
+        flag, msg = data[0], data[1:]
+
+        if flag == '0':   # 参加できた場合
+            print(msg)
+            print('> ', end='')
+            name = input()
+            sock.send(name.encode())
+            msg = sock.recv(1024).decode()
+            print(msg)
+        elif flag == '1': # 参加できなかった場合
+            print(msg)
+        else:
+            raise ValueError
+
 
     def wait_player_process():
         """プレイヤーを待っている間の処理"""
